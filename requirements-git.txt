@@ -1,0 +1,3 @@
+# ultimatevocalremover_api is not on PyPI.
+# Using the original upstream repo (NextAudioGen), not jhj0517's fork.
+git+https://github.com/NextAudioGen/ultimatevocalremover_api.git
