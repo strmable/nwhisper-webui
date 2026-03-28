@@ -122,7 +122,9 @@ class BaseTranscriptionPipeline(ABC):
 
         params = TranscriptionPipelineParams.from_list(list(pipeline_params))
         params = self.validate_gradio_values(params)
-        bgm_params, vad_params, whisper_params, diarization_params = params.bgm_separation, params.vad, params.whisper, params.diarization
+        bgm_params, vad_params, whisper_params, diarization_params, safe_mode_params = (
+            params.bgm_separation, params.vad, params.whisper, params.diarization, params.safe_mode
+        )
 
         if bgm_params.is_separate_bgm:
             music, audio, _ = self.music_separator.separate(
@@ -148,45 +150,125 @@ class BaseTranscriptionPipeline(ABC):
 
         origin_audio = deepcopy(audio)
 
-        if vad_params.vad_filter:
-            progress(0, desc="Filtering silent parts from audio..")
-            vad_options = VadOptions(
-                threshold=vad_params.threshold,
-                min_speech_duration_ms=vad_params.min_speech_duration_ms,
-                max_speech_duration_s=vad_params.max_speech_duration_s,
-                min_silence_duration_ms=vad_params.min_silence_duration_ms,
-                speech_pad_ms=vad_params.speech_pad_ms
-            )
+        if safe_mode_params.enabled:
+            # ---- Safe Mode: chunk-based transcription ----
+            import faster_whisper as _fw
+            from modules.safe_mode import ChunkSplitter, ChunkTranscriber, OffsetCorrector, MergeDedup
 
-            vad_processed, speech_chunks = self.vad.run(
+            # Ensure audio is a numpy array (may still be a path if BGM was not run)
+            if not isinstance(audio, np.ndarray):
+                progress(0, desc="Loading audio..")
+                audio = _fw.decode_audio(audio, sampling_rate=16000)
+                origin_audio = audio
+
+            # Build VAD options — use user settings if VAD is enabled, else defaults
+            if vad_params.vad_filter:
+                vad_options = VadOptions(
+                    threshold=vad_params.threshold,
+                    min_speech_duration_ms=vad_params.min_speech_duration_ms,
+                    max_speech_duration_s=vad_params.max_speech_duration_s,
+                    min_silence_duration_ms=vad_params.min_silence_duration_ms,
+                    speech_pad_ms=vad_params.speech_pad_ms
+                )
+            else:
+                vad_options = VadOptions()
+
+            progress(0, desc="[SafeMode] Detecting speech segments for chunking..")
+            _, speech_chunks = self.vad.run(
                 audio=audio,
                 vad_parameters=vad_options,
                 progress=progress
             )
 
-            if vad_processed.size > 0:
-                audio = vad_processed
-            else:
-                vad_params.vad_filter = False
-
-        result, elapsed_time_transcription = self.transcribe(
-            audio,
-            progress,
-            progress_callback,
-            *whisper_params.to_list()
-        )
-        if whisper_params.enable_offload:
-            self.offload()
-
-        if vad_params.vad_filter:
-            restored_result = self.vad.restore_speech_timestamps(
-                segments=result,
+            # Split audio into chunks
+            progress(0, desc="[SafeMode] Splitting audio into chunks..")
+            chunks = ChunkSplitter().split(
                 speech_chunks=speech_chunks,
+                audio=audio,
+                max_chunk_sec=safe_mode_params.max_chunk_length_sec,
+                overlap_sec=safe_mode_params.chunk_overlap_sec,
             )
-            if restored_result:
-                result = restored_result
+
+            if not chunks:
+                logger.warning("[SafeMode] ChunkSplitter returned no chunks; falling back to standard transcription")
+                result, elapsed_time_transcription = self.transcribe(
+                    audio, progress, progress_callback, *whisper_params.to_list()
+                )
             else:
-                logger.info("VAD detected no speech segments in the audio.")
+                # Transcribe each chunk independently
+                chunk_results = ChunkTranscriber().transcribe_chunks(
+                    chunks=chunks,
+                    pipeline=self,
+                    whisper_params=whisper_params,
+                    progress=progress,
+                    progress_callback=progress_callback,
+                )
+
+                # Offset correction (in-place, returns same list)
+                chunk_results = OffsetCorrector().correct(chunk_results)
+
+                # Overlap deduplication
+                if safe_mode_params.gemini_enabled and safe_mode_params.gemini_api_key:
+                    from modules.safe_mode.gemini_merger import GeminiMerger
+                    result = GeminiMerger(
+                        api_key=safe_mode_params.gemini_api_key,
+                        model=safe_mode_params.gemini_model,
+                    ).merge(chunk_results, safe_mode_params.gemini_context_sentences)
+                elif safe_mode_params.merge_dedup:
+                    result = MergeDedup().merge(chunk_results)
+                else:
+                    # No dedup: flatten all segments sorted by start time
+                    result = sorted(
+                        [s for cr in chunk_results for s in cr.segments],
+                        key=lambda s: s.start or 0.0
+                    )
+
+            if whisper_params.enable_offload:
+                self.offload()
+            # ---- End Safe Mode ----
+
+        else:
+            # ---- Standard transcription ----
+            if vad_params.vad_filter:
+                progress(0, desc="Filtering silent parts from audio..")
+                vad_options = VadOptions(
+                    threshold=vad_params.threshold,
+                    min_speech_duration_ms=vad_params.min_speech_duration_ms,
+                    max_speech_duration_s=vad_params.max_speech_duration_s,
+                    min_silence_duration_ms=vad_params.min_silence_duration_ms,
+                    speech_pad_ms=vad_params.speech_pad_ms
+                )
+
+                vad_processed, speech_chunks = self.vad.run(
+                    audio=audio,
+                    vad_parameters=vad_options,
+                    progress=progress
+                )
+
+                if vad_processed.size > 0:
+                    audio = vad_processed
+                else:
+                    vad_params.vad_filter = False
+
+            result, elapsed_time_transcription = self.transcribe(
+                audio,
+                progress,
+                progress_callback,
+                *whisper_params.to_list()
+            )
+            if whisper_params.enable_offload:
+                self.offload()
+
+            if vad_params.vad_filter:
+                restored_result = self.vad.restore_speech_timestamps(
+                    segments=result,
+                    speech_chunks=speech_chunks,
+                )
+                if restored_result:
+                    result = restored_result
+                else:
+                    logger.info("VAD detected no speech segments in the audio.")
+            # ---- End Standard transcription ----
 
         if diarization_params.is_diarize:
             progress(0.99, desc="Diarizing speakers..")
@@ -589,6 +671,8 @@ class BaseTranscriptionPipeline(ABC):
         cached_yaml = {**cached_params, **param_to_cache}
         cached_yaml["whisper"]["add_timestamp"] = add_timestamp
         cached_yaml["whisper"]["file_format"] = file_format
+        if "safe_mode" not in cached_yaml:
+            cached_yaml["safe_mode"] = {}
 
         supress_token = cached_yaml["whisper"].get("suppress_tokens", None)
         if supress_token and isinstance(supress_token, list):

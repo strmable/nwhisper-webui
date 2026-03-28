@@ -577,19 +577,119 @@ class WhisperParams(BaseParams):
         return inputs
 
 
+GEMINI_FLASH_MODELS = [
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-flash",
+]
+
+
+class SafeModeParams(BaseParams):
+    """Long File Safe Mode parameters for chunked transcription"""
+    enabled: bool = Field(default=False, description="Enable Long File Safe Mode")
+    max_chunk_length_sec: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum length of each audio chunk in seconds"
+    )
+    chunk_overlap_sec: float = Field(
+        default=1.0,
+        ge=0,
+        description="Overlap between consecutive chunks in seconds"
+    )
+    merge_dedup: bool = Field(
+        default=True,
+        description="Remove duplicate segments at chunk boundaries"
+    )
+    gemini_enabled: bool = Field(
+        default=False,
+        description="Use Gemini LLM for smarter overlap merging"
+    )
+    gemini_api_key: str = Field(
+        default="",
+        description="Google AI Studio API key for Gemini"
+    )
+    gemini_model: str = Field(
+        default="gemini-2.0-flash-lite",
+        description="Gemini model to use for merge"
+    )
+    gemini_context_sentences: int = Field(
+        default=3,
+        ge=1,
+        description="Number of context sentences to pass to Gemini"
+    )
+
+    @classmethod
+    def to_gradio_inputs(cls, defaults: Optional[Dict] = None) -> List:
+        if defaults is None:
+            defaults = {}
+        return [
+            gr.Checkbox(
+                label=_("Enable Long File Safe Mode"),
+                value=defaults.get("enabled", cls.__fields__["enabled"].default),
+                interactive=True,
+                info=_("Splits audio into chunks for independent transcription to reduce hallucinations")
+            ),
+            gr.Slider(
+                minimum=20, maximum=60, step=1,
+                label=_("Max Chunk Length (sec)"),
+                value=defaults.get("max_chunk_length_sec", cls.__fields__["max_chunk_length_sec"].default),
+                info=_("Maximum length of each audio chunk in seconds (20~60)")
+            ),
+            gr.Slider(
+                minimum=0.5, maximum=5.0, step=0.1,
+                label=_("Chunk Overlap (sec)"),
+                value=defaults.get("chunk_overlap_sec", cls.__fields__["chunk_overlap_sec"].default),
+                info=_("Overlap between consecutive chunks to avoid cutting words (0.5~5.0)")
+            ),
+            gr.Checkbox(
+                label=_("Merge Deduplication"),
+                value=defaults.get("merge_dedup", cls.__fields__["merge_dedup"].default),
+                interactive=True,
+                info=_("Remove duplicate segments at chunk overlap boundaries")
+            ),
+            gr.Checkbox(
+                label=_("Enable LLM-based Merge (Gemini)"),
+                value=defaults.get("gemini_enabled", cls.__fields__["gemini_enabled"].default),
+                interactive=True,
+                info=_("Use Gemini for smarter overlap merging (requires API key)")
+            ),
+            gr.Textbox(
+                label=_("Gemini API Key"),
+                value=defaults.get("gemini_api_key", cls.__fields__["gemini_api_key"].default),
+                type="password",
+                info=_("Google AI Studio API key")
+            ),
+            gr.Dropdown(
+                label=_("Gemini Model"),
+                choices=GEMINI_FLASH_MODELS,
+                value=defaults.get("gemini_model", cls.__fields__["gemini_model"].default),
+            ),
+            gr.Number(
+                label=_("Gemini Context Sentences"),
+                value=defaults.get("gemini_context_sentences", cls.__fields__["gemini_context_sentences"].default),
+                precision=0,
+                info=_("Number of context sentences passed to Gemini per overlap boundary")
+            ),
+        ]
+
+
 class TranscriptionPipelineParams(BaseModel):
     """Transcription pipeline parameters"""
     whisper: WhisperParams = Field(default_factory=WhisperParams)
     vad: VadParams = Field(default_factory=VadParams)
     diarization: DiarizationParams = Field(default_factory=DiarizationParams)
     bgm_separation: BGMSeparationParams = Field(default_factory=BGMSeparationParams)
+    safe_mode: SafeModeParams = Field(default_factory=SafeModeParams)
 
     def to_dict(self) -> Dict:
         data = {
             "whisper": self.whisper.to_dict(),
             "vad": self.vad.to_dict(),
             "diarization": self.diarization.to_dict(),
-            "bgm_separation": self.bgm_separation.to_dict()
+            "bgm_separation": self.bgm_separation.to_dict(),
+            "safe_mode": self.safe_mode.to_dict(),
         }
         return data
 
@@ -603,7 +703,8 @@ class TranscriptionPipelineParams(BaseModel):
         vad_list = self.vad.to_list()
         diarization_list = self.diarization.to_list()
         bgm_sep_list = self.bgm_separation.to_list()
-        return whisper_list + vad_list + diarization_list + bgm_sep_list
+        safe_mode_list = self.safe_mode.to_list()
+        return whisper_list + vad_list + diarization_list + bgm_sep_list + safe_mode_list
 
     @staticmethod
     def from_list(pipeline_list: List) -> 'TranscriptionPipelineParams':
@@ -620,10 +721,14 @@ class TranscriptionPipelineParams(BaseModel):
         data_list = data_list[len(DiarizationParams.__annotations__):]
 
         bgm_sep_list = data_list[0:len(BGMSeparationParams.__annotations__)]
+        data_list = data_list[len(BGMSeparationParams.__annotations__):]
+
+        safe_mode_list = data_list[0:len(SafeModeParams.__annotations__)]
 
         return TranscriptionPipelineParams(
             whisper=WhisperParams.from_list(whisper_list),
             vad=VadParams.from_list(vad_list),
             diarization=DiarizationParams.from_list(diarization_list),
-            bgm_separation=BGMSeparationParams.from_list(bgm_sep_list)
+            bgm_separation=BGMSeparationParams.from_list(bgm_sep_list),
+            safe_mode=SafeModeParams.from_list(safe_mode_list),
         )

@@ -156,13 +156,34 @@ class FasterWhisperInference(BaseTranscriptionPipeline):
             local_files_only = True
 
         self.current_compute_type = compute_type
-        self.model = faster_whisper.WhisperModel(
-            device=self.device,
-            model_size_or_path=self.current_model_size,
-            download_root=self.model_dir,
-            compute_type=self.current_compute_type,
-            local_files_only=local_files_only
-        )
+        try:
+            self.model = faster_whisper.WhisperModel(
+                device=self.device,
+                model_size_or_path=self.current_model_size,
+                download_root=self.model_dir,
+                compute_type=self.current_compute_type,
+                local_files_only=local_files_only
+            )
+        except RuntimeError as e:
+            if "cannot be loaded" in str(e) and self.device != "cpu":
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"Failed to load model on device='{self.device}' "
+                    f"(compute_type='{self.current_compute_type}'): {e}\n"
+                    "Falling back to CPU with int8."
+                )
+                self.device = "cpu"
+                self.current_compute_type = "int8"
+                self.available_compute_types = list(__import__("ctranslate2").get_supported_compute_types("cpu"))
+                self.model = faster_whisper.WhisperModel(
+                    device="cpu",
+                    model_size_or_path=self.current_model_size,
+                    download_root=self.model_dir,
+                    compute_type="int8",
+                    local_files_only=local_files_only
+                )
+            else:
+                raise
 
     def get_model_paths(self):
         """
@@ -191,8 +212,22 @@ class FasterWhisperInference(BaseTranscriptionPipeline):
     def get_device():
         if torch.cuda.is_available():
             return "cuda"
-        else:
-            return "auto"
+        # torch says no CUDA, but ctranslate2 may independently detect GPU hardware.
+        # Verify CUDA DLLs are actually loadable before returning "cuda".
+        try:
+            import ctranslate2, ctypes
+            if not ctranslate2.get_supported_compute_types("cuda"):
+                return "cpu"
+            # Check that required CUDA runtime DLLs exist
+            for dll in ["cublas64_12.dll", "cublas64_11.dll", "cublasLt64_12.dll"]:
+                try:
+                    ctypes.CDLL(dll)
+                    return "cuda"
+                except OSError:
+                    continue
+            return "cpu"
+        except Exception:
+            return "cpu"
 
     @staticmethod
     def format_suppress_tokens_str(suppress_tokens_str: str) -> List[int]:

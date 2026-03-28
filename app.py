@@ -51,6 +51,7 @@ class App:
         vad_params = self.default_params["vad"]
         diarization_params = self.default_params["diarization"]
         uvr_params = self.default_params["bgm_separation"]
+        safe_mode_params = self.default_params.get("safe_mode", {})
 
         with gr.Row():
             dd_model = gr.Dropdown(choices=self.whisper_inf.available_models, value=whisper_params["model_size"],
@@ -87,7 +88,10 @@ class App:
                                                                     available_devices=self.whisper_inf.diarizer.available_device,
                                                                     device=self.whisper_inf.diarizer.device)
 
-        pipeline_inputs = [dd_model, dd_lang, cb_translate] + whisper_inputs + vad_inputs + diarization_inputs + uvr_inputs
+        with gr.Accordion(_("Long File Safe Mode"), open=False):
+            safe_mode_inputs = SafeModeParams.to_gradio_inputs(defaults=safe_mode_params)
+
+        pipeline_inputs = [dd_model, dd_lang, cb_translate] + whisper_inputs + vad_inputs + diarization_inputs + uvr_inputs + safe_mode_inputs
 
         return (
             pipeline_inputs,
