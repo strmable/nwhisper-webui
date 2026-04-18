@@ -619,6 +619,10 @@ class SafeModeParams(BaseParams):
         ge=1,
         description="Number of context sentences to pass to Gemini"
     )
+    skip_repeated_text: bool = Field(
+        default=True,
+        description="Skip segments whose text is identical to the previous segment (hallucination filter)"
+    )
 
     @classmethod
     def to_gradio_inputs(cls, defaults: Optional[Dict] = None) -> List:
@@ -671,6 +675,12 @@ class SafeModeParams(BaseParams):
                 value=defaults.get("gemini_context_sentences", cls.__fields__["gemini_context_sentences"].default),
                 precision=0,
                 info=_("Number of context sentences passed to Gemini per overlap boundary")
+            ),
+            gr.Checkbox(
+                label=_("Skip Repeated Text (Hallucination Filter)"),
+                value=defaults.get("skip_repeated_text", cls.__fields__["skip_repeated_text"].default),
+                interactive=True,
+                info=_("Remove segments whose text is identical to the previous segment")
             ),
         ]
 

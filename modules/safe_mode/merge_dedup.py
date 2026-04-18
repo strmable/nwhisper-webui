@@ -89,6 +89,34 @@ class MergeDedup:
         return self._renumber(kept)
 
     @staticmethod
+    def remove_consecutive_duplicates(segments: List[Segment]) -> List[Segment]:
+        """
+        Remove segments whose text is identical to the immediately preceding segment.
+        Targets hallucination artifacts where Whisper repeats the same sentence.
+        """
+        kept: List[Segment] = []
+        prev_text: str = ""
+        removed = 0
+
+        for seg in segments:
+            text = (seg.text or "").strip()
+            if text and text == prev_text:
+                logger.debug(
+                    f"[SafeMode] Skip repeated segment [{seg.start:.2f}s]: \"{text[:60]}\""
+                )
+                removed += 1
+                continue
+            kept.append(seg)
+            prev_text = text
+
+        if removed:
+            logger.info(
+                f"[SafeMode] SkipRepeatedText: {len(segments)} → {len(kept)} segments "
+                f"({removed} repeated removed)"
+            )
+        return MergeDedup._renumber(kept)
+
+    @staticmethod
     def _renumber(segments: List[Segment]) -> List[Segment]:
         for i, seg in enumerate(segments, start=1):
             seg.id = i

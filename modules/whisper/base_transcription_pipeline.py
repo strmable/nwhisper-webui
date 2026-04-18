@@ -232,6 +232,10 @@ class BaseTranscriptionPipeline(ABC):
                         key=lambda s: s.start or 0.0
                     )
 
+                # Hallucination filter: drop segments with same text as previous
+                if safe_mode_params.skip_repeated_text:
+                    result = MergeDedup.remove_consecutive_duplicates(result)
+
             if whisper_params.enable_offload:
                 self.offload()
             # ---- End Safe Mode ----
