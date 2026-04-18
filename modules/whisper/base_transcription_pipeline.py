@@ -195,6 +195,14 @@ class BaseTranscriptionPipeline(ABC):
                     audio, progress, progress_callback, *whisper_params.to_list()
                 )
             else:
+                # Derive a readable name for the checkpoint file
+                if isinstance(audio, str):
+                    source_name = os.path.splitext(os.path.basename(audio))[0]
+                elif hasattr(audio, "name"):
+                    source_name = os.path.splitext(os.path.basename(audio.name))[0]
+                else:
+                    source_name = "safe_mode"
+
                 # Transcribe each chunk independently
                 chunk_results = ChunkTranscriber().transcribe_chunks(
                     chunks=chunks,
@@ -202,6 +210,7 @@ class BaseTranscriptionPipeline(ABC):
                     whisper_params=whisper_params,
                     progress=progress,
                     progress_callback=progress_callback,
+                    source_name=source_name,
                 )
 
                 # Offset correction (in-place, returns same list)

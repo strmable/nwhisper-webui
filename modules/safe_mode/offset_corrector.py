@@ -40,7 +40,7 @@ class OffsetCorrector:
                     f"[{seg.start:.2f}, {seg.end:.2f}] \"{(seg.text or '').strip()[:40]}\""
                 )
 
-        logger.info(
+        logger.debug(
             f"[SafeMode] OffsetCorrector: {total} segments corrected across "
             f"{len(chunk_results)} chunks"
         )

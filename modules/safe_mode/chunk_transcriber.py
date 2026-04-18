@@ -1,3 +1,5 @@
+import os
+import datetime
 import gradio as gr
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable
@@ -6,8 +8,29 @@ from copy import deepcopy
 from modules.safe_mode.chunk_splitter import Chunk
 from modules.whisper.data_classes import Segment, WhisperParams
 from modules.utils.logger import get_logger
+from modules.utils.paths import OUTPUT_DIR
 
 logger = get_logger()
+
+
+def _seconds_to_srt_time(seconds: float) -> str:
+    td = datetime.timedelta(seconds=max(0.0, seconds))
+    total_seconds = int(td.total_seconds())
+    millis = int((td.total_seconds() - total_seconds) * 1000)
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d},{millis:03d}"
+
+
+def _save_partial_srt(segments: List[Segment], checkpoint_path: str) -> None:
+    """Write accumulated segments to SRT (overwrites on each call)."""
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
+        for idx, seg in enumerate(segments, start=1):
+            start = _seconds_to_srt_time(seg.start or 0.0)
+            end = _seconds_to_srt_time(seg.end or 0.0)
+            text = (seg.text or "").strip()
+            f.write(f"{idx}\n{start} --> {end}\n{text}\n\n")
 
 
 @dataclass
@@ -43,6 +66,7 @@ class ChunkTranscriber:
         whisper_params: WhisperParams,
         progress: gr.Progress = gr.Progress(),
         progress_callback: Optional[Callable] = None,
+        source_name: str = "safe_mode",
     ) -> List[ChunkResult]:
         """
         Transcribe each chunk independently.
@@ -68,6 +92,13 @@ class ChunkTranscriber:
 
         total = len(chunks)
         results = []
+
+        # Checkpoint file: overwritten after every chunk so partial results
+        # survive if an error occurs mid-way.
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in source_name)
+        checkpoint_path = os.path.join(OUTPUT_DIR, f"{safe_name}_checkpoint.srt")
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        logger.info(f"[SafeMode] Checkpoint file: {checkpoint_path}")
 
         for i, chunk in enumerate(chunks):
             progress_ratio = i / total
@@ -97,6 +128,20 @@ class ChunkTranscriber:
             )
 
             results.append(ChunkResult(chunk=chunk, segments=segments))
+
+            # Save partial SRT after every chunk.
+            # Make a shallow copy so the checkpoint offset does not affect the
+            # main results list (segments are deepcopied per chunk).
+            from modules.safe_mode.offset_corrector import OffsetCorrector
+            from copy import deepcopy as _deepcopy
+            partial_copy = [ChunkResult(chunk=cr.chunk, segments=_deepcopy(cr.segments)) for cr in results]
+            partial_chunk_results = OffsetCorrector().correct(partial_copy)
+            partial_segments = [s for cr in partial_chunk_results for s in cr.segments]
+            partial_segments.sort(key=lambda s: s.start or 0.0)
+            _save_partial_srt(partial_segments, checkpoint_path)
+            logger.debug(
+                f"[SafeMode] Checkpoint saved: {len(partial_segments)} segments → {checkpoint_path}"
+            )
 
         logger.info(
             f"[SafeMode] All {total} chunks transcribed. "

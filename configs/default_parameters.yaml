@@ -1,5 +1,5 @@
 whisper:
-  model_size: large-v2
+  model_size: base
   lang: Automatic Detection
   is_translate: false
   beam_size: 5
@@ -34,7 +34,7 @@ whisper:
   add_timestamp: false
   file_format: SRT
 vad:
-  vad_filter: true
+  vad_filter: false
   threshold: 0.5
   min_speech_duration_ms: 250
   max_speech_duration_s: 9999
