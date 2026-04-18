@@ -236,6 +236,10 @@ class BaseTranscriptionPipeline(ABC):
                 if safe_mode_params.skip_repeated_text:
                     result = MergeDedup.remove_consecutive_duplicates(result)
 
+                # Hallucination filter: drop suspiciously long segments
+                if safe_mode_params.max_segment_length > 0:
+                    result = MergeDedup.remove_long_segments(result, safe_mode_params.max_segment_length)
+
             if whisper_params.enable_offload:
                 self.offload()
             # ---- End Safe Mode ----

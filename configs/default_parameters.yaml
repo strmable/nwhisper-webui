@@ -62,6 +62,7 @@ safe_mode:
   gemini_model: gemini-2.0-flash-lite
   gemini_context_sentences: 3
   skip_repeated_text: true
+  max_segment_length: 80
 translation:
   deepl:
     api_key: ''

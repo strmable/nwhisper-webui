@@ -117,6 +117,36 @@ class MergeDedup:
         return MergeDedup._renumber(kept)
 
     @staticmethod
+    def remove_long_segments(segments: List[Segment], max_length: int) -> List[Segment]:
+        """
+        Remove segments whose text exceeds max_length characters.
+        Unusually long segments are a common hallucination pattern.
+        max_length=0 disables the filter.
+        """
+        if max_length <= 0:
+            return segments
+
+        kept = []
+        removed = 0
+        for seg in segments:
+            text = (seg.text or "").strip()
+            if len(text) > max_length:
+                logger.debug(
+                    f"[SafeMode] Drop long segment [{seg.start:.2f}s] "
+                    f"len={len(text)}: \"{text[:60]}...\""
+                )
+                removed += 1
+                continue
+            kept.append(seg)
+
+        if removed:
+            logger.info(
+                f"[SafeMode] MaxSegmentLength: {len(segments)} → {len(kept)} segments "
+                f"({removed} long segments removed)"
+            )
+        return MergeDedup._renumber(kept)
+
+    @staticmethod
     def _renumber(segments: List[Segment]) -> List[Segment]:
         for i, seg in enumerate(segments, start=1):
             seg.id = i

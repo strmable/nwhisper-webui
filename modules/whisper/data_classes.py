@@ -623,6 +623,11 @@ class SafeModeParams(BaseParams):
         default=True,
         description="Skip segments whose text is identical to the previous segment (hallucination filter)"
     )
+    max_segment_length: int = Field(
+        default=80,
+        ge=0,
+        description="Remove segments longer than this many characters (0 = disabled)"
+    )
 
     @classmethod
     def to_gradio_inputs(cls, defaults: Optional[Dict] = None) -> List:
@@ -681,6 +686,12 @@ class SafeModeParams(BaseParams):
                 value=defaults.get("skip_repeated_text", cls.__fields__["skip_repeated_text"].default),
                 interactive=True,
                 info=_("Remove segments whose text is identical to the previous segment")
+            ),
+            gr.Number(
+                label=_("Max Segment Length (chars, 0=off)"),
+                value=defaults.get("max_segment_length", cls.__fields__["max_segment_length"].default),
+                precision=0,
+                info=_("Remove segments longer than this many characters (hallucination tends to be very long)")
             ),
         ]
 
