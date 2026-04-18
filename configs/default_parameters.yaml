@@ -63,6 +63,7 @@ safe_mode:
   gemini_context_sentences: 3
   skip_repeated_text: true
   max_segment_length: 80
+  skip_garbled_text: true
 translation:
   deepl:
     api_key: ''

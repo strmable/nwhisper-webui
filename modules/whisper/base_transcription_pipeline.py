@@ -240,6 +240,10 @@ class BaseTranscriptionPipeline(ABC):
                 if safe_mode_params.max_segment_length > 0:
                     result = MergeDedup.remove_long_segments(result, safe_mode_params.max_segment_length)
 
+                # Hallucination filter: drop segments with U+FFFD replacement character
+                if safe_mode_params.skip_garbled_text:
+                    result = MergeDedup.remove_garbled_segments(result)
+
             if whisper_params.enable_offload:
                 self.offload()
             # ---- End Safe Mode ----

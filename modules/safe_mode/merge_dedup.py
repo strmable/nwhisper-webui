@@ -117,6 +117,31 @@ class MergeDedup:
         return MergeDedup._renumber(kept)
 
     @staticmethod
+    def remove_garbled_segments(segments: List[Segment]) -> List[Segment]:
+        """
+        Remove segments containing the Unicode replacement character (U+FFFD '').
+        Its presence indicates a decoding failure and is a hallucination marker.
+        """
+        kept = []
+        removed = 0
+        for seg in segments:
+            if '\ufffd' in (seg.text or ''):
+                logger.debug(
+                    f"[SafeMode] Drop garbled segment [{seg.start:.2f}s]: "
+                    f"\"{(seg.text or '').strip()[:60]}\""
+                )
+                removed += 1
+                continue
+            kept.append(seg)
+
+        if removed:
+            logger.info(
+                f"[SafeMode] GarbledFilter: {len(segments)} → {len(kept)} segments "
+                f"({removed} garbled segments removed)"
+            )
+        return MergeDedup._renumber(kept)
+
+    @staticmethod
     def remove_long_segments(segments: List[Segment], max_length: int) -> List[Segment]:
         """
         Remove segments whose text exceeds max_length characters.

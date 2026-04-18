@@ -628,6 +628,10 @@ class SafeModeParams(BaseParams):
         ge=0,
         description="Remove segments longer than this many characters (0 = disabled)"
     )
+    skip_garbled_text: bool = Field(
+        default=True,
+        description="Remove segments containing U+FFFD replacement character (hallucination marker)"
+    )
 
     @classmethod
     def to_gradio_inputs(cls, defaults: Optional[Dict] = None) -> List:
@@ -692,6 +696,12 @@ class SafeModeParams(BaseParams):
                 value=defaults.get("max_segment_length", cls.__fields__["max_segment_length"].default),
                 precision=0,
                 info=_("Remove segments longer than this many characters (hallucination tends to be very long)")
+            ),
+            gr.Checkbox(
+                label=_("Skip Garbled Text (U+FFFD Filter)"),
+                value=defaults.get("skip_garbled_text", cls.__fields__["skip_garbled_text"].default),
+                interactive=True,
+                info=_("Remove segments containing  replacement character, a hallucination marker")
             ),
         ]
 
